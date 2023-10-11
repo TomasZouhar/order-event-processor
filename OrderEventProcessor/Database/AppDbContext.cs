@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
+using OrderEventProcessor.Migrations;
 using OrderEventProcessor.Model;
 
 namespace OrderEventProcessor.Database
@@ -18,6 +19,9 @@ namespace OrderEventProcessor.Database
     
     public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
     {
+        public AppDbContextFactory()
+        {
+        }
         public AppDbContext CreateDbContext(string[] args)
         {
             var optionsBuilder = new DbContextOptionsBuilder<AppDbContext>();
