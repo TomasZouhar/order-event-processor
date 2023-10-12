@@ -1,26 +1,68 @@
 ﻿using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using OrderEventProcessor.Database;
 using OrderEventProcessor.Model;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using static OrderEventProcessor.MessageProcessor;
 
 namespace OrderEventProcessor;
 public class Program
 {
+    // Set VERBOSE to true for detailed logging
+    const bool VERBOSE = false;
+    public static void Log(string message)
+    {
+        if (VERBOSE)
+        {
+            Console.WriteLine(message);
+        }
+    }
     /*
-     * Method used for sending two test messages to RabbitQM queue
-     * This method is used for testing the app
+     * Method used for testing connection to RabbitMQ and Postgres
+     */
+    private static void TestConnection(string[] args)
+    {
+        var configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+        
+        try
+        {
+            var factory = new ConnectionFactory
+            {
+                HostName = configuration.GetSection("RABBIT_HOST").Value,
+                UserName = configuration.GetSection("RABBIT_USER").Value,
+                Password = configuration.GetSection("RABBIT_PASSWORD").Value,
+                VirtualHost = configuration.GetSection("RABBIT_VHOST").Value,
+            };
+            
+            var testConnection = factory.CreateConnection();
+            testConnection.Close();
+            
+            var testDb = new AppDbContextFactory().CreateDbContext(args);
+            testDb.Database.EnsureCreated();
+        }
+        catch (Exception e)
+        {
+            Log(e.ToString());
+            throw new Exception("RabbitMQ or Postgres not running properly");
+        }
+    }
+    /*
+     * Method used for sending test messages to RabbitQM queue
+     * This method is used for initializing the app with data (for showcase purposes)
      */
     private static void SendTestMessages(string[] args)
     {
+        var configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+
         // Define connection factory
         var factory = new ConnectionFactory
         {
-            HostName = "localhost",
-            UserName = "tomzo",
-            Password = "tomzo",
-            VirtualHost = "/"
+            HostName = configuration.GetSection("RABBIT_HOST").Value,
+            UserName = configuration.GetSection("RABBIT_USER").Value,
+            Password = configuration.GetSection("RABBIT_PASSWORD").Value,
+            VirtualHost = configuration.GetSection("RABBIT_VHOST").Value,
         };
         using var connection = factory.CreateConnection();
         // Create channel
@@ -32,32 +74,15 @@ public class Program
         var newOrderId = lastOrderId != null ? int.Parse(lastOrderId) + 1 : 0;
         var productId = "Laptop " + newOrderId;
         
-        // Declare order-event-queue
-        channel.QueueDeclare(queue: "order-event-queue",
+        // Declare event-queue
+        channel.QueueDeclare(queue: "event-queue",
             durable: false,
             exclusive: false,
             autoDelete: false,
-            arguments: null);
-        
-        // Prepare first order
-        var orderEvent = new OrderEvent
-        {
-            Id = newOrderId.ToString(),
-            Product = productId,
-            Total = 10000.00m,
-            Currency = "CZK"
-        };
-        var orderEventJson = JsonSerializer.Serialize(orderEvent);
-        var orderEventBody = Encoding.UTF8.GetBytes(orderEventJson);
-        var orderEventProperties = channel.CreateBasicProperties();
-        orderEventProperties.Headers = new Dictionary<string, object>();
-        orderEventProperties.Headers.Add("X-MsgType", "OrderEvent");
-        
-        // Send first order
-        channel.BasicPublish(exchange: "",
-            routingKey: "order-event-queue",
-            basicProperties: orderEventProperties,
-            body: orderEventBody);
+            arguments: new Dictionary<string, object>
+            {
+                { "x-max-priority", 2 }
+            });
         
         // Prepare first payment
         var paymentEvent = new PaymentEvent
@@ -70,10 +95,11 @@ public class Program
         var paymentEventProperties = channel.CreateBasicProperties();
         paymentEventProperties.Headers = new Dictionary<string, object>();
         paymentEventProperties.Headers.Add("X-MsgType", "PaymentEvent");
+        paymentEventProperties.Priority = 1;
         
         // Send first payment
         channel.BasicPublish(exchange: "",
-            routingKey: "payment-event-queue",
+            routingKey: "event-queue",
             basicProperties: paymentEventProperties,
             body: paymentEventBody);
         
@@ -88,53 +114,75 @@ public class Program
         paymentEventProperties = channel.CreateBasicProperties();
         paymentEventProperties.Headers = new Dictionary<string, object>();
         paymentEventProperties.Headers.Add("X-MsgType", "PaymentEvent");
+        paymentEventProperties.Priority = 1;
         // Send second payment
         channel.BasicPublish(exchange: "",
-            routingKey: "payment-event-queue",
+            routingKey: "event-queue",
             basicProperties: paymentEventProperties,
             body: paymentEventBody);
+        
+        
+        // Prepare first order
+        var orderEvent = new OrderEvent
+        {
+            Id = newOrderId.ToString(),
+            Product = productId,
+            Total = 10000.00m,
+            Currency = "CZK"
+        };
+        var orderEventJson = JsonSerializer.Serialize(orderEvent);
+        var orderEventBody = Encoding.UTF8.GetBytes(orderEventJson);
+        var orderEventProperties = channel.CreateBasicProperties();
+        orderEventProperties.Headers = new Dictionary<string, object>();
+        orderEventProperties.Headers.Add("X-MsgType", "OrderEvent");
+        orderEventProperties.Priority = 2;
+        
+        // Send first order
+        channel.BasicPublish(exchange: "",
+            routingKey: "event-queue",
+            basicProperties: orderEventProperties,
+            body: orderEventBody);
     }
     
     /*
      * Main method for the app
-     * This method is used for receiving messages from RabbitMQ queues and processing them
+     * This method is used for receiving messages from RabbitMQ queues and calling processing methods on them
      */
     public static void Main(string[] args)
     {
+        // Test connection to RabbitMQ and Postgres
+        TestConnection(args);
+        
+        // Send mock messages to RabbitMQ queue
         SendTestMessages(args);
+        
+        var configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+
         // Define connection factory
         var factory = new ConnectionFactory
         {
-            HostName = "localhost",
-            UserName = "tomzo",
-            Password = "tomzo",
-            VirtualHost = "/"
+            HostName = configuration.GetSection("RABBIT_HOST").Value,
+            UserName = configuration.GetSection("RABBIT_USER").Value,
+            Password = configuration.GetSection("RABBIT_PASSWORD").Value,
+            VirtualHost = configuration.GetSection("RABBIT_VHOST").Value,
         };
         using var connection = factory.CreateConnection();
         using var channel = connection.CreateModel();
         
         // Declare queues
-        channel.QueueDeclare(queue: "order-event-queue",
+        channel.QueueDeclare(queue: "event-queue",
             durable: false,
             exclusive: false,
             autoDelete: false,
-            arguments: null);
-        
-        channel.QueueDeclare(queue: "payment-event-queue",
-            durable: false,
-            exclusive: false,
-            autoDelete: false,
-            arguments: null);
+            arguments: new Dictionary<string, object>
+            {
+                { "x-max-priority", 2 }
+            });
         
         // Define message consumer, which will be used for receiving messages from RabbitMQ queue
         var consumer = new EventingBasicConsumer(channel);
         consumer.Received += (model, ea) =>
         {
-            Console.WriteLine("Received message");
-            var body = ea.Body.ToArray();
-            var message = Encoding.UTF8.GetString(body);
-            Console.WriteLine($"Message: {message}");
-
             // Check if the "X-MsgType" header exists
             if (ea.BasicProperties.Headers != null && ea.BasicProperties.Headers.ContainsKey("X-MsgType"))
             {
@@ -145,96 +193,23 @@ public class Program
                     return;
                 }
                 var msgType = Encoding.UTF8.GetString(msgTypeBytes);
-                Console.WriteLine($"With type: {msgType}");
+                Log($"With type: {msgType}");
 
                 if (msgType == "OrderEvent")
                 {
-                    Console.WriteLine("Order event received.");
-                    var orderEvent = JsonSerializer.Deserialize<OrderEvent>(message);
-                    
-                    if(orderEvent == null)
-                    {
-                        return;
-                    }
-                    
-                    var orderModel = new OrderEvent()
-                    {
-                        Id = orderEvent.Id,
-                        Product = orderEvent.Product,
-                        Total = orderEvent.Total,
-                        Currency = orderEvent.Currency
-                    };
-                    
-                    Console.WriteLine($"Order: {orderModel.Id}, Product: {orderModel.Product}, Total: {orderModel.Total} {orderModel.Currency}");
-                
-                    //store order event in Postgres DB
-                    using var db = new AppDbContextFactory().CreateDbContext(args);
-
-                    try
-                    {
-                        db.OrderEvents.Add(orderModel);
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine(e);
-                        throw;
-                    }
-                    db.SaveChanges();
-                    Console.WriteLine("Order event saved to DB.");
+                    ProcessOrderEvent(ea, args);
                 }
                 else if (msgType == "PaymentEvent")
                 {
-                    Console.WriteLine("Payment event received.");
-                    var paymentEvent = JsonSerializer.Deserialize<PaymentEvent>(message);
-                    
-                    if(paymentEvent == null)
-                    {
-                        return;
-                    }
-
-                    var paymentModel = new PaymentEvent()
-                    {
-                        Id = Guid.NewGuid().ToString(),
-                        OrderId = paymentEvent.OrderId,
-                        Amount = paymentEvent.Amount
-                    };
-                    
-                    Console.WriteLine($"Payment: {paymentModel.Id}, Order: {paymentModel.OrderId}, Amount: {paymentModel.Amount}");
-                    using var db = new AppDbContextFactory().CreateDbContext(args);
-
-                    db.PaymentEvents.Add(paymentModel);
-                    db.SaveChanges();
-                    Console.WriteLine("Payment event saved to DB.");
-                
-                    // Check if order is fully paid
-                    var order = db.OrderEvents.FirstOrDefault(o => o.Id == paymentEvent.OrderId);
-                    if (order != null)
-                    {
-                        Console.WriteLine("Order for payment found.");
-                        var paidAmount = db.PaymentEvents.Where(p => p.OrderId == paymentEvent.OrderId).Sum(p => p.Amount);
-                        Console.WriteLine($"Paid amount: {paidAmount}");
-                        if (paidAmount >= order.Total)
-                        {
-                            Console.WriteLine($"Order: {order.Id}, Product: {order.Product}, Total: {order.Total} {order.Currency}, Status: PAID");
-                        }
-                        else
-                        {
-                            Console.WriteLine("Order not fully paid.");
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine($"Order: {paymentEvent.OrderId} not found.");
-                    }
+                    ProcessPaymentEvent(ea, args);
                 }
             }
             else
             {
-                Console.WriteLine("Invalid header type.");
+                Log("Invalid header type.");
             }
         };
-        channel.BasicConsume(queue: "order-event-queue", autoAck: true, consumer: consumer);
-        channel.BasicConsume(queue: "payment-event-queue", autoAck: true, consumer: consumer);
+        channel.BasicConsume(queue: "event-queue", autoAck: true, consumer: consumer);
         
         Console.WriteLine("Press any key to exit.");
         Console.ReadLine();

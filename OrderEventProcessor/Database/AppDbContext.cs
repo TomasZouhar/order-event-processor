@@ -25,7 +25,13 @@ namespace OrderEventProcessor.Database
         public AppDbContext CreateDbContext(string[] args)
         {
             var optionsBuilder = new DbContextOptionsBuilder<AppDbContext>();
-            optionsBuilder.UseNpgsql("Host=localhost;Database=postgres;Username=postgres;Password=tomzo");
+            //optionsBuilder.UseNpgsql("Host=localhost;Database=postgres;Username=postgres;Password=tomzo");
+            // use the connection string from appsettings.json, which is located in the project root directory (unlike this file)
+            var configuration = new ConfigurationBuilder()
+                .AddJsonFile("appsettings.json")
+                .Build();
+            
+            optionsBuilder.UseNpgsql(configuration.GetConnectionString("DefaultConnection"));
 
             return new AppDbContext(optionsBuilder.Options);
         }

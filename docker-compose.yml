@@ -6,12 +6,12 @@ services:
       context: .
       dockerfile: ./OrderEventProcessor/Dockerfile
     ports:
-      - "8080:80"  # Adjust the port mapping as needed
+      - "8080:80"
     depends_on:
       - db
       - rabbitmq
     environment:
-      - ConnectionStrings__DefaultConnection=Host=db;Database=postgres;Username=postgres;Password=tomzo  # Modify this connection string
+      - ConnectionStrings__DefaultConnection=Host=db;Database=postgres;Username=postgres;Password=tomzo
 
   db:
     image: postgres:15
@@ -21,14 +21,14 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: tomzo
     ports:
-      - "5432:5432"  # Adjust the port mapping as needed
+      - "5432:5432"
 
 
   rabbitmq:
     image: "rabbitmq:management"
     container_name: rabbitmq-container
     ports:
-      - "5672:5672"  # RabbitMQ message port
+      - "5672:5672"
     environment:
       - "RABBITMQ_DEFAULT_PASS=tomzo"
       - "RABBITMQ_DEFAULT_USER=tomzo"
