@@ -170,7 +170,7 @@ public class Program
      * Method for processing order events
      * This method is used for processing order events received from RabbitMQ queue
      */
-    private static void ProcessOrderEvent(BasicDeliverEventArgs ea, String[] args)
+    public static void ProcessOrderEvent(BasicDeliverEventArgs ea, String[] args)
     {
         Console.WriteLine("Received message");
         var body = ea.Body.ToArray();
@@ -215,7 +215,7 @@ public class Program
      * Method for processing payment events
      * This method is used for processing payment events received from RabbitMQ queue
      */
-    private static void ProcessPaymentEvent(BasicDeliverEventArgs ea, String[] args)
+    public static void ProcessPaymentEvent(BasicDeliverEventArgs ea, String[] args)
     {
         Console.WriteLine("Received message");
         var body = ea.Body.ToArray();
