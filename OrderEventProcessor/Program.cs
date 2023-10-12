@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using OrderEventProcessor.Database;
 using OrderEventProcessor.Model;
 using RabbitMQ.Client;
@@ -8,19 +9,59 @@ using RabbitMQ.Client.Events;
 namespace OrderEventProcessor;
 public class Program
 {
+    // Set VERBOSE to true for detailed logging
+    const bool VERBOSE = false;
+    private static void Log(string message)
+    {
+        if (VERBOSE)
+        {
+            Console.WriteLine(message);
+        }
+    }
     /*
-     * Method used for sending two test messages to RabbitQM queue
-     * This method is used for testing the app
+     * Method used for testing connection to RabbitMQ and Postgres
+     */
+    private static void TestConnection(string[] args)
+    {
+        var configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+        
+        try
+        {
+            var factory = new ConnectionFactory
+            {
+                HostName = configuration.GetSection("RABBIT_HOST").Value,
+                UserName = configuration.GetSection("RABBIT_USER").Value,
+                Password = configuration.GetSection("RABBIT_PASSWORD").Value,
+                VirtualHost = configuration.GetSection("RABBIT_VHOST").Value,
+            };
+            
+            var testConnection = factory.CreateConnection();
+            testConnection.Close();
+            
+            var testDb = new AppDbContextFactory().CreateDbContext(args);
+            testDb.Database.EnsureCreated();
+        }
+        catch (Exception e)
+        {
+            Log(e.ToString());
+            throw new Exception("RabbitMQ or Postgres not running properly");
+        }
+    }
+    /*
+     * Method used for sending test messages to RabbitQM queue
+     * This method is used for initializing the app with data (for showcase purposes)
      */
     private static void SendTestMessages(string[] args)
     {
+        var configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+
         // Define connection factory
         var factory = new ConnectionFactory
         {
-            HostName = "localhost",
-            UserName = "tomzo",
-            Password = "tomzo",
-            VirtualHost = "/"
+            HostName = configuration.GetSection("RABBIT_HOST").Value,
+            UserName = configuration.GetSection("RABBIT_USER").Value,
+            Password = configuration.GetSection("RABBIT_PASSWORD").Value,
+            VirtualHost = configuration.GetSection("RABBIT_VHOST").Value,
         };
         using var connection = factory.CreateConnection();
         // Create channel
@@ -32,7 +73,7 @@ public class Program
         var newOrderId = lastOrderId != null ? int.Parse(lastOrderId) + 1 : 0;
         var productId = "Laptop " + newOrderId;
         
-        // Declare order-event-queue
+        // Declare event-queue
         channel.QueueDeclare(queue: "event-queue",
             durable: false,
             exclusive: false,
@@ -108,14 +149,21 @@ public class Program
      */
     public static void Main(string[] args)
     {
+        // Test connection to RabbitMQ and Postgres
+        TestConnection(args);
+        
+        // Send mock messages to RabbitMQ queue
         SendTestMessages(args);
+        
+        var configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+
         // Define connection factory
         var factory = new ConnectionFactory
         {
-            HostName = "localhost",
-            UserName = "tomzo",
-            Password = "tomzo",
-            VirtualHost = "/"
+            HostName = configuration.GetSection("RABBIT_HOST").Value,
+            UserName = configuration.GetSection("RABBIT_USER").Value,
+            Password = configuration.GetSection("RABBIT_PASSWORD").Value,
+            VirtualHost = configuration.GetSection("RABBIT_VHOST").Value,
         };
         using var connection = factory.CreateConnection();
         using var channel = connection.CreateModel();
@@ -144,7 +192,7 @@ public class Program
                     return;
                 }
                 var msgType = Encoding.UTF8.GetString(msgTypeBytes);
-                Console.WriteLine($"With type: {msgType}");
+                Log($"With type: {msgType}");
 
                 if (msgType == "OrderEvent")
                 {
@@ -157,7 +205,7 @@ public class Program
             }
             else
             {
-                Console.WriteLine("Invalid header type.");
+                Log("Invalid header type.");
             }
         };
         channel.BasicConsume(queue: "event-queue", autoAck: true, consumer: consumer);
@@ -172,12 +220,12 @@ public class Program
      */
     public static void ProcessOrderEvent(BasicDeliverEventArgs ea, String[] args)
     {
-        Console.WriteLine("Received message");
+        Log("Received message");
         var body = ea.Body.ToArray();
         var message = Encoding.UTF8.GetString(body);
-        Console.WriteLine($"Message: {message}");
+        Log($"Message: {message}");
         
-        Console.WriteLine("Order event received.");
+        Log("Order event received.");
         var orderEvent = JsonSerializer.Deserialize<OrderEvent>(message);
                     
         if(orderEvent == null)
@@ -193,7 +241,7 @@ public class Program
             Currency = orderEvent.Currency
         };
                     
-        Console.WriteLine($"Order: {orderModel.Id}, Product: {orderModel.Product}, Total: {orderModel.Total} {orderModel.Currency}");
+        Log($"Order: {orderModel.Id}, Product: {orderModel.Product}, Total: {orderModel.Total} {orderModel.Currency}");
                 
         //store order event in Postgres DB
         using var db = new AppDbContextFactory().CreateDbContext(args);
@@ -204,11 +252,11 @@ public class Program
         }
         catch (Exception e)
         {
-            Console.WriteLine(e);
+            Log(e.ToString());
             throw;
         }
         db.SaveChanges();
-        Console.WriteLine("Order event saved to DB.");
+        Log("Order event saved to DB.");
     }
 
     /*
@@ -217,12 +265,12 @@ public class Program
      */
     public static void ProcessPaymentEvent(BasicDeliverEventArgs ea, String[] args)
     {
-        Console.WriteLine("Received message");
+        Log("Received message");
         var body = ea.Body.ToArray();
         var message = Encoding.UTF8.GetString(body);
-        Console.WriteLine($"Message: {message}");
+        Log($"Message: {message}");
         
-        Console.WriteLine("Payment event received.");
+        Log("Payment event received.");
         var paymentEvent = JsonSerializer.Deserialize<PaymentEvent>(message);
         
         if(paymentEvent == null)
@@ -237,32 +285,32 @@ public class Program
             Amount = paymentEvent.Amount
         };
         
-        Console.WriteLine($"Payment: {paymentModel.Id}, Order: {paymentModel.OrderId}, Amount: {paymentModel.Amount}");
+        Log($"Payment: {paymentModel.Id}, Order: {paymentModel.OrderId}, Amount: {paymentModel.Amount}");
         using var db = new AppDbContextFactory().CreateDbContext(args);
 
         db.PaymentEvents.Add(paymentModel);
         db.SaveChanges();
-        Console.WriteLine("Payment event saved to DB.");
+        Log("Payment event saved to DB.");
     
         // Check if order is fully paid
         var order = db.OrderEvents.FirstOrDefault(o => o.Id == paymentEvent.OrderId);
         if (order != null)
         {
-            Console.WriteLine("Order for payment found.");
+            Log("Order for payment found.");
             var paidAmount = db.PaymentEvents.Where(p => p.OrderId == paymentEvent.OrderId).Sum(p => p.Amount);
-            Console.WriteLine($"Paid amount: {paidAmount}");
+            Log($"Paid amount: {paidAmount}");
             if (paidAmount >= order.Total)
             {
                 Console.WriteLine($"Order: {order.Id}, Product: {order.Product}, Total: {order.Total} {order.Currency}, Status: PAID");
             }
             else
             {
-                Console.WriteLine("Order not fully paid.");
+                Log("Order not fully paid.");
             }
         }
         else
         {
-            Console.WriteLine($"Order: {paymentEvent.OrderId} not found.");
+            Log($"Order: {paymentEvent.OrderId} not found.");
         }
     }
 }
